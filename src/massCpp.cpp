@@ -41,10 +41,11 @@ void mass(  double *mass,
         )
     {
 
-    size_t i=0,k=0,j=0,do_at=0,l=0,upcount=0,lowcount=0,rtup=0,rtlow=0,howmany=0;
+    size_t i=0, k=0, j=0, do_at=0, l=0, upcount=0, lowcount=0, rtup=0, rtlow=0, howmany=0;
     int entry2=*entry;
     double uptol, lowtol, thismasslow, thismasslow2, thismassup, thismassup2;
-    //generate index vectors:
+    
+    //Generate index vectors:
     vector<int> index;
     vector<int> index2;
 
@@ -78,53 +79,97 @@ void mass(  double *mass,
     getit6b = INTEGER_POINTER(getit6bstore);
     for(k=0;k<(size_t)(*a+1);k++){*(getit6b+k) = 0;}
 
-    // read in data: /////////////////////////////////////////////////////////
+    // Read data into dat1
     dat dat1;
-    // (a) m/z
-    for(i=0;i<(unsigned)*a;i++){dat1.mass.push_back(mass[i]);}
-    // (b) retention time
-    for(i=0;i<(unsigned)*a;i++){dat1.retent.push_back(retent[i]);}
-    //////////////////////////////////////////////////////////////////////////
-
-    // run search: ///////////////////////////////////////////////////////////
-    for(i=0;i<(unsigned)*a;i++){
-        if((i==0)||(dat1.retent[i]!=dat1.retent[i-1])){ // build new index vector = all peaks within dRT
-            uptol=dat1.retent[i]+*rttolup;
-            lowtol=dat1.retent[i]+*rttollow;
-            while(((rtup+1)<(unsigned)*a) && (dat1.retent[rtup+1]<=uptol)) {rtup++;};
-            while(((rtlow+1)<(unsigned)*a) && (dat1.retent[rtlow]<lowtol)) {rtlow++;};
-            index.erase (index.begin(),index.end());
+    
+    // m/z
+    for(i=0; i<(unsigned)*a; i++){
+        dat1.mass.push_back(mass[i]);
+    }
+    // Retention time
+    for(i=0; i<(unsigned)*a; i++){
+        dat1.retent.push_back(retent[i]);
+    }
+    
+    bool first_iter, rt_change;
+    
+    // Search loop:
+    for(i = 0;i < (unsigned)*a; i++){
+        
+        // Find out where in the loop we are or if RT changed from the last peak
+        first_iter = (i == 0);
+        rt_change = (dat1.retent[i]!=dat1.retent[i-1]);
+        
+        // If this is the first iteration or the RT was changed:
+        //Build new index vector with all peaks within the rt tolerance
+        if(first_iter || rt_change){ 
+            
+            //Get upper and lower tolerance
+            uptol  = dat1.retent[i] +* rttolup;
+            lowtol = dat1.retent[i] +* rttollow;
+            
+            //Get indices rtlow,rtup of the retetion times that are within the specififed tolerance
+            while(((rtlow + 1) < (unsigned)*a) && (dat1.retent[rtlow] < lowtol)) {
+                rtlow++;
+            };
+            
+            rtup = rtlow;
+            
+            while(((rtup + 1) < (unsigned)*a) && (dat1.retent[rtup + 1] <= uptol)){
+                rtup++;
+            }
+            
+            // Fill index with the numbers from rtlow to rtup
+            index.clear();
             for(j=rtlow; j<=rtup; j++){
                     index.push_back(j);
-            };
-            sort(index.begin(),index.end(),dat1); // sort vector by mass
-            do_at=0;
-            while( (((do_at+1)<index.size()) && (dat1.mass[index[do_at]]<=dat1.mass[i]))) {do_at++;};
-        }else{ // old index vector valid = sorted by mass, searched by increasing masses only
-            if(dat1.mass[i]<dat1.mass[i-1]){ // reset
+            }
+            
+            // Sort mass vector
+            sort(index.begin(), index.end(), dat1);
+            
+            
+            // Get the index of the mass in dat1 with the correct retention time
+            do_at = 0;
+            while((((do_at + 1) < index.size()) && (dat1.mass[index[do_at]] <= dat1.mass[i]))){
+                do_at++;
+            }
+        }else{
+            
+            // Else, index is still valid from the last iteration
+            
+            // Get the index of the mass in dat1 with the correct retention time
+            if(dat1.mass[i]<dat1.mass[i-1]){
                 do_at=0;
                 while ((((do_at+1) < index.size() ) && (dat1.mass[index[do_at]] <= dat1.mass[i]))) {do_at++;};
-            }else{ // increase
+            }else{
                  while ((((do_at+1) < index.size() ) && (dat1.mass[index[do_at]] <= dat1.mass[i]))) {do_at++;};
             }
-        }; // if1
-
-
-        howmany = index.size(); // within RT-window?
-        if(howmany>0){ // sth in vector and not at its mass end
+        }
+        
+        // How many peaks are in the specified RT window?
+        howmany = index.size(); 
+        
+        // If there are peaks in the vector
+        if(howmany>0){ 
+            
             if(*ppm2==1){
+                //Get mass tolerance (if supplied in ppm)
                 thismasslow=(dat1.mass[i]-(dat1.mass[i]**masstol/1E6));
                 thismasslow2=(dat1.mass[i]-(((dat1.mass[i]**masstol/1E6))**massfrac));
                 thismassup=(dat1.mass[i]+(dat1.mass[i]**masstol/1E6));
                 thismassup2=(dat1.mass[i]+(((dat1.mass[i]**masstol/1E6))**massfrac));
             }else{
+                //Get mass tolerance (if supplied as absolute)
                 thismasslow=(dat1.mass[i]-*masstol);
                 thismasslow2=(dat1.mass[i]-(*masstol**massfrac));
                 thismassup=(dat1.mass[i]+*masstol);
                 thismassup2=(dat1.mass[i]+(*masstol**massfrac));
-            };
+            }
+            
             upcount=do_at;
             lowcount=do_at;
+            
             for(k = 0; k<(unsigned)*manyisos; k++){
                 while(((upcount+1)<howmany ) && (dat1.mass[index[upcount+1]]<=(thismassup + isomat1[k]))) {
                     upcount++;
