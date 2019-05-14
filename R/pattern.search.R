@@ -57,14 +57,14 @@ pattern.search  <-  function(
         
         # (1.2.1)
         # Variables for mass increments
-        n_samples <- nrow(samples)
+        n_peaks <- nrow(samples)
         ID <-  peaklist_order
         
-        getit1 <- rep("none",n_samples)   # (1) which isotope?
-        getit2 <- rep("0",n_samples)      # (2) from which peak?
-        getit4 <- rep("0",n_samples)      # (3) to which peak?
-        getit5 <- rep("0",n_samples)      # (4) within [1] large or [2] small mass tolerance?
-        getit6 <- rep("0",n_samples)      # (5) with which charge?
+        getit1 <- rep("none",n_peaks)   # (1) which isotope?
+        getit2 <- rep("0",n_peaks)      # (2) from which peak?
+        getit4 <- rep("0",n_peaks)      # (3) to which peak?
+        getit5 <- rep("0",n_peaks)      # (4) within [1] large or [2] small mass tolerance?
+        getit6 <- rep("0",n_peaks)      # (5) with which charge?
         
         # (1.2.2)
         # Variables for mass increment validation
@@ -83,12 +83,12 @@ pattern.search  <-  function(
         # (1.2.3)
         # Variables for grouping and atom number estimation
         groupcount <- c(1)
-        group1 <- rep("0",n_samples)      # which group? per charge level!
-        group2 <- rep("0",n_samples)      # which tree level?
+        group1 <- rep("0",n_peaks)      # which group? per charge level!
+        group2 <- rep("0",n_peaks)      # which tree level?
         groupinfo <- rep()           # how many atoms?
         group3 <- c()                # number of group ...
         group4 <- c()                # ... and ID of peaks in that group!
-        group5 <- rep("0",n_samples)      # store charge level
+        group5 <- rep("0",n_peaks)      # store charge level
         group6 <- c()                # store charge level
         
         # (2)
@@ -104,10 +104,10 @@ pattern.search  <-  function(
         getit5a <- rep(0,length(samples[,1])*entry)
         getit6a <- rep(0,length(samples[,1])*entry)
         maxmass <- max(isomat[,2])
-        print(system.time(result <- .C("mass",
+        result <- .C("mass",
                    as.double(samples[,1]),
                    as.double(samples[,3]),
-                   as.integer(n_samples),
+                   as.integer(n_peaks),
                    as.double(mztol*2),
                    as.double(mzfrac*2),
                    as.double(rttol[1]),
@@ -125,29 +125,37 @@ pattern.search  <-  function(
                    as.integer(getit5a),
                    as.integer(getit6a), # 19
                    PACKAGE="nontarget"
-        )))
-        # generate outputs: ########################################################
+        )
+        
+        # Generate outputs: 
         isomat[,4] <- result[10]
-        # (1) which isotope? #######################################################
-        for(i in 1:(n_samples)){
-            if(any(result[15][[1]][((i-1)*entry+1):((i-1)*entry+entry)]!=0)){
+        
+        # Go through all peaks
+        for(i in 1:(n_peaks)){
+            
+            # See if the current peak is any isotope or if it has an isotope
+            is_isotope <- any(result[15][[1]][((i-1)*entry+1):((i-1)*entry+entry)]!=0)
+            has_isotope <- any(result[16][[1]][((i-1)*entry+1):((i-1)*entry+entry)]!=0)
+            
+            if(is_isotope){
+                
+                # Which isotope
                 getit1[i] <- paste(getit1[i],"/",paste0(result[15][[1]][((i-1)*entry+1):((i-1)*entry+entry)][result[15][[1]][((i-1)*entry+1):((i-1)*entry+entry)]!=0],collapse="/"),sep="")
+                
+                # To which peak
+                getit4[i] <- paste(getit4[i],"/",paste0(result[17][[1]][((i-1)*entry+1):((i-1)*entry+entry)][result[17][[1]][((i-1)*entry+1):((i-1)*entry+entry)]!=0],collapse="/"),sep="")
+                
+                # Charge level
+                getit6[i] <- paste(getit6[i],"/",paste0(result[19][[1]][((i-1)*entry+1):((i-1)*entry+entry)][result[19][[1]][((i-1)*entry+1):((i-1)*entry+entry)]!=0],collapse="/"),sep="")
             }
-        }
-        # (2) from which peak? #####################################################
-        for(i in 1:(n_samples)){
-            if(any(result[16][[1]][((i-1)*entry+1):((i-1)*entry+entry)]!=0)){
+
+            if(has_isotope){
+                
+                # From which peak
                 getit2[i] <- paste(getit2[i],"/",paste0(result[16][[1]][((i-1)*entry+1):((i-1)*entry+entry)][result[16][[1]][((i-1)*entry+1):((i-1)*entry+entry)]!=0],collapse="/"),sep="")
             }
-        }
-        # (3) to which peak? #######################################################
-        for(i in 1:(n_samples)){
-            if(any(result[17][[1]][((i-1)*entry+1):((i-1)*entry+entry)]!=0)){
-                getit4[i] <- paste(getit4[i],"/",paste0(result[17][[1]][((i-1)*entry+1):((i-1)*entry+entry)][result[17][[1]][((i-1)*entry+1):((i-1)*entry+entry)]!=0],collapse="/"),sep="")
-            }
-        }
-        # (4) tolerance: small or large? ###########################################
-        for(i in 1:(n_samples)){
+
+            # Tolerance: Small or large? 
             for(j in 1:entry){
                 if(result[18][[1]][(i-1)*entry+j]==1){
                     getit5[i] <- paste(getit5[i],"small",sep="/")
@@ -157,25 +165,18 @@ pattern.search  <-  function(
                 }
             }
         }
-        # (5) charge level: ########################################################
-        for(i in 1:(n_samples)){
-            if(any(result[19][[1]][((i-1)*entry+1):((i-1)*entry+entry)]!=0)){
-                getit6[i] <- paste(getit6[i],"/",paste0(result[19][[1]][((i-1)*entry+1):((i-1)*entry+entry)][result[19][[1]][((i-1)*entry+1):((i-1)*entry+entry)]!=0],collapse="/"),sep="")
-            }
-        }	
+        
         if(result[13][[1]]!=entry){cat("WARNING: entry overflow -> links missing! Decrease mztol? Increase entry argument?")}
         rm(result)
-        #dyn.unload(paste(.libPaths(),"/nontarget/temp/massCpp.dll",sep=""))
-        #data.frame(samples[,1],samples[,3],getit4,getit2,getit1,getit5,getit6)
-        cat("done.")
-        ############################################################################
-        
-        ############################################################################
+
         if(deter==FALSE){
             cat("\n (3) Check plausibility ... ")
-            # (3) remove invalid dmass-links based on rules (1) to (3) #################
-            for(i in 1:length(getit4)){
-                if(getit4[i]!="0"){ # anything to check?
+            
+            # (3) Remove invalid dmass-links based on rules (1) to (3)
+            ST_2 <- system.time(for(i in 1:length(getit4)){
+                
+                # Is there anything to check?
+                if(getit4[i]!="0"){ 
                     #
                     ##########################################################################
                     # (3.1) RULE1: intensity ratio check over ALL isotopes at charge level ###
@@ -625,27 +626,25 @@ pattern.search  <-  function(
                     }# rule 11
                     ##########################################################################
                 } # if
-            } # for
+            })[3] # for
             #it <- data.frame(ID,getit4,getit2,getit1,getit5,getit6)
             #names(it) <- c("ID","to","from","isotope","tol","charge")
             cat("done.")
         }else{
             cat("\n (3) Plausibility tests skipped. ")
         } # if deter == FALSE
-        ############################################################################
-        ############################################################################
-        
-        ############################################################################
+  
         ############################################################################
         cat("\n (4) Group peaks within charge levels: ")
         # (4) group! ###############################################################
+        ST_3 <- system.time({
         along <- order(samples[,1],decreasing=FALSE)
         for(z in 1:length(charge_isos)){
-            group1b <- rep("0",n_samples)      # which group? per charge level! renew per charge level!
-            group2b <- rep("0",n_samples)      # which interaction level?
-            group5b <- rep("0",n_samples)      # ... and which charge?
+            group1b <- rep("0",n_peaks)      # which group? per charge level! renew per charge level!
+            group2b <- rep("0",n_peaks)      # which interaction level?
+            group5b <- rep("0",n_peaks)      # ... and which charge?
             i <- c(1)
-            while(i<n_samples){
+            while(i<n_peaks){
                 # correct entry, if peak points at itself! ###############################
                 these1 <- c(as.numeric(strsplit(getit4[along[i]],"/")[[1]][-1]))
                 if(any(these1==along[i])){ # remove any self-reference
@@ -893,7 +892,7 @@ pattern.search  <-  function(
             } # while i
             ############################################################################
             # merge results from different charge levels! ##############################
-            for(x in 1:n_samples){ 
+            for(x in 1:n_peaks){ 
                 if(group1b[x]!="0"){
                     group1[x] <- paste(group1[x],group1b[x],sep="/")
                     group1[x] <- sub("/0/","/",group1[x])
@@ -906,7 +905,7 @@ pattern.search  <-  function(
             cat(paste(charge_isos[z],"/",sep=""))
         } # for z = charge level ###################################################
         ############################################################################
-        for(x in 1:n_samples){ 
+        for(x in 1:n_peaks){ 
             if(group1[x]!="0"){
                 group1[x] <- substr(group1[x],1,nchar(group1[x])-2)
                 group2[x] <- substr(group2[x],1,nchar(group2[x])-2)
@@ -923,7 +922,7 @@ pattern.search  <-  function(
             removals3 <- c()
             removals4 <- c()
             countrem11 <- c(0)
-            for(i in 1:n_samples){
+            for(i in 1:n_peaks){
                 if(group1[i]!="0"){
                     this1 <- as.numeric(strsplit(group1[i],"/")[[1]][-1])
                     if(length(this1)>1){
@@ -983,12 +982,12 @@ pattern.search  <-  function(
         # data.frame(ID,getit4,getit1,getit5,getit6)
         cat("done.")
         ############################################################################
-        
+        })[3]
         ############################################################################
         cat("\n (5) Create output... ")
         ############################################################################
         overlap <- rep(0,100)
-        for(i in 1:n_samples){
+        for(i in 1:n_peaks){
             if(group1[i]!="0"){
                 this11 <- strsplit(group1[i],"/")[[1]]
                 this11 <- this11[-length(this11)]
@@ -1076,7 +1075,7 @@ pattern.search  <-  function(
         }
         ############################################################################
         # correct entries:
-        for(i in 1:n_samples){
+        for(i in 1:n_peaks){
             if(getit2[i]!="0"){getit2[i] <- substr(getit2[i],3,nchar(getit2[i]))}
             if(getit4[i]!="0"){
                 getit4[i] <- substr(getit4[i],3,nchar(getit4[i]))
@@ -1169,6 +1168,6 @@ pattern.search  <-  function(
             "Rule settings"
         )
         cat("done.\n\n")
-        return(pattern)
-        
+        return(list(pattern, ST_2, ST_3))
+        #return(pattern)
     }

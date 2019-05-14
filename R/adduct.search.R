@@ -57,17 +57,17 @@ function(
         cat("\n(2) Build peaklist kd-tree, screen, ... \n");
         inter<-as.numeric(interactive())
         pBar <- txtProgressBar( min = 0, max = length(peaklist[,1]), style = 3 )
-        peakTree<-.Call("kdtree4", 
+        T_kd <- system.time({peakTree<-.Call("kdtree4", 
                         as.matrix(peaklist[,c(1,3)]),
                         as.integer(inter),
                         pBar,
                         PACKAGE="nontarget"
-        );
+        );})
         close(pBar)
         peakTree<-peakTree[,1:4,drop=FALSE];
         if(ppm=="TRUE"){ppm2<-1}else{ppm2<-0}
         pBar <- txtProgressBar(min = 0, max = length(peaklist[,1]), style = 3 )
-        relat<-.Call("adduct_search",
+        T_adduct_search <- system.time({relat<-.Call("adduct_search",
                      as.matrix(peaklist[,c(1,3)]),  	# peaklist
                      as.matrix(peakTree),			# peaks - search tree
                      as.matrix(add2),				# adduct table
@@ -77,7 +77,7 @@ function(
                      as.integer(inter),
                      pBar,	
                      PACKAGE="nontarget"
-        );
+        );})
         close(pBar)
     })
 	
@@ -186,12 +186,16 @@ function(
         names(adduct)<-c("adducts","Parameters","Peaks in adduct groups","Adduct counts","Overlaps");
         cat("done.\n\n");
     })
-    sink("~/nontarget.txt", append=T)
-	cat("Step 1")
+    sink("./nontarget.txt", append=T)
+	cat("Step 1 time:")
 	print(T1)
-	cat("Step 2")
+	cat("Step 2 time:")
 	print(T2)
-	cat("Step 3")
+	cat("Step kd time:")
+	print(T_kd)
+	cat("Step adduct search time:")
+	print(T_adduct_search)
+	cat("Step 3 time:")
 	print(T3)
     sink()
 	############################################################################

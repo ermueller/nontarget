@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <algorithm>
+#include <numeric>
 #include <vector>
 #include <Rdefines.h>
 #include <Rinternals.h>
@@ -26,7 +27,7 @@ void mass(  double *mass,
             double *massfrac,
             double *rttollow,
             double *rttolup,
-            int *manyisos,
+            int *n_isos,
             double *isomat1,
             int *isomat3,
             double *maxmass1,
@@ -40,15 +41,21 @@ void mass(  double *mass,
             int *getit6
         )
     {
-
-    size_t i=0, k=0, j=0, do_at=0, l=0, upcount=0, lowcount=0, rtup=0, rtlow=0, howmany=0;
-    int entry2=*entry;
-    double uptol, lowtol, thismasslow, thismasslow2, thismassup, thismassup2;
     
+    //Initialize variables
+    size_t i=0, k=0, j=0, do_at=0, l=0, upcount=0, lowcount=0, rtup=0, rtlow=0, howmany=0;
+    int entry2=*entry, sortnum=0;
+    double uptol, lowtol, thismasslow, thismasslow2, thismassup, thismassup2, time_used_a, time_used_b=0, time_used_c=0;
+    clock_t start, end;
+    
+
     //Generate index vectors:
+    vector<double> datmass;
     vector<int> index;
     vector<int> index2;
-
+    vector<int> index_test;
+    
+    // Read in the variables from R
     SEXP getit1bstore;
     PROTECT(getit1bstore = NEW_INTEGER(*a+1));
     int *getit1b;
@@ -86,6 +93,7 @@ void mass(  double *mass,
     for(i=0; i<(unsigned)*a; i++){
         dat1.mass.push_back(mass[i]);
     }
+    
     // Retention time
     for(i=0; i<(unsigned)*a; i++){
         dat1.retent.push_back(retent[i]);
@@ -101,17 +109,19 @@ void mass(  double *mass,
         rt_change = (dat1.retent[i]!=dat1.retent[i-1]);
         
         // If this is the first iteration or the RT was changed:
-        //Build new index vector with all peaks within the rt tolerance
+        // Build new index vector with all peaks within the rt tolerance
         if(first_iter || rt_change){ 
             
-            //Get upper and lower tolerance
-            uptol  = dat1.retent[i] +* rttolup;
-            lowtol = dat1.retent[i] +* rttollow;
+            datmass = dat1.mass;
             
-            //Get indices rtlow,rtup of the retetion times that are within the specififed tolerance
+            //Get upper and lower tolerance
+            uptol  = dat1.retent[i] + *rttolup;
+            lowtol = dat1.retent[i] + *rttollow;
+            
+            //Get indices rtlow,rtup of the retetion times that are within the specified tolerance
             while(((rtlow + 1) < (unsigned)*a) && (dat1.retent[rtlow] < lowtol)) {
                 rtlow++;
-            };
+            }
             
             rtup = rtlow;
             
@@ -121,19 +131,27 @@ void mass(  double *mass,
             
             // Fill index with the numbers from rtlow to rtup
             index.clear();
-            for(j=rtlow; j<=rtup; j++){
+
+            for(j = rtlow; j <= rtup; j++){
                     index.push_back(j);
             }
+            index_test = index;
             
-            // Sort mass vector
-            sort(index.begin(), index.end(), dat1);
+
+            // Sort the index by using a lambda (internal functions in C++, basically)
+            sort(index.begin(), index.end(), [&](int i1, int i2) { return datmass[i1] < datmass[i2]; });
             
+            // Alternative old way: Sort index vector by mass (see "dat.operator()")
+            // This is slow because of the struct thing, I think
             
+            // sort(index.begin(), index.end(), dat1);
+
             // Get the index of the mass in dat1 with the correct retention time
             do_at = 0;
             while((((do_at + 1) < index.size()) && (dat1.mass[index[do_at]] <= dat1.mass[i]))){
                 do_at++;
             }
+
         }else{
             
             // Else, index is still valid from the last iteration
@@ -141,25 +159,27 @@ void mass(  double *mass,
             // Get the index of the mass in dat1 with the correct retention time
             if(dat1.mass[i]<dat1.mass[i-1]){
                 do_at=0;
-                while ((((do_at+1) < index.size() ) && (dat1.mass[index[do_at]] <= dat1.mass[i]))) {do_at++;};
-            }else{
-                 while ((((do_at+1) < index.size() ) && (dat1.mass[index[do_at]] <= dat1.mass[i]))) {do_at++;};
             }
+            
+            while ((((do_at+1) < index.size()) && (dat1.mass[index[do_at]] <= dat1.mass[i]))) {do_at++;};
         }
+        
         
         // How many peaks are in the specified RT window?
         howmany = index.size(); 
         
         // If there are peaks in the vector
-        if(howmany>0){ 
-            
+        if(howmany>0){
+            start = clock();
             if(*ppm2==1){
+                
                 //Get mass tolerance (if supplied in ppm)
                 thismasslow=(dat1.mass[i]-(dat1.mass[i]**masstol/1E6));
                 thismasslow2=(dat1.mass[i]-(((dat1.mass[i]**masstol/1E6))**massfrac));
                 thismassup=(dat1.mass[i]+(dat1.mass[i]**masstol/1E6));
                 thismassup2=(dat1.mass[i]+(((dat1.mass[i]**masstol/1E6))**massfrac));
             }else{
+                
                 //Get mass tolerance (if supplied as absolute)
                 thismasslow=(dat1.mass[i]-*masstol);
                 thismasslow2=(dat1.mass[i]-(*masstol**massfrac));
@@ -167,35 +187,54 @@ void mass(  double *mass,
                 thismassup2=(dat1.mass[i]+(*masstol**massfrac));
             }
             
-            upcount=do_at;
-            lowcount=do_at;
+            lowcount = do_at;
             
-            for(k = 0; k<(unsigned)*manyisos; k++){
-                while(((upcount+1)<howmany ) && (dat1.mass[index[upcount+1]]<=(thismassup + isomat1[k]))) {
-                    upcount++;
-                };
-                while(((lowcount+1)<howmany) && (dat1.mass[index[lowcount]]<(thismasslow + isomat1[k]))) {
+            // Go through all isotopes
+            for(k = 0; k<(unsigned)*n_isos; k++){
+                
+                //Set the mass window
+                while(((lowcount+1) < howmany) && (dat1.mass[index[lowcount]] < (thismasslow + isomat1[k]))){
                     lowcount++;
-                };//set mass window
-                for(l=lowcount;l<=upcount;l++){
+                }
+                
+                upcount = lowcount;
+                
+                while(((upcount+1) < howmany ) && (dat1.mass[index[upcount+1]] <= (thismassup + isomat1[k]))){
+                    upcount++;
+                }
+                
+                // Go through all peaks and add them to the output
+                for(l=lowcount; l<=upcount; l++){
+                    
+                    // If the mass is within the isotope range, add it as a candidate
                     if( (dat1.mass[index[l]]<=(thismassup + isomat1[k])) && (dat1.mass[index[l]]>=(thismasslow + isomat1[k]))){
-                        if(*(getit2b+index[l])<(*entry+1)){ // from?
+                        
+                        // From?
+                        if(*(getit2b+index[l])<(*entry+1)){ 
                             getit2[(index[l]**entry)+(*(getit2b+index[l]))]=(i+1);
                             *(getit2b+index[l]) = (*(getit2b+index[l])+1);
                         }
-                        if( *(getit4b+i)<(*entry+1) ){ // to?
+                        
+                        // To?
+                        if( *(getit4b+i)<(*entry+1) ){ 
                             getit4[i**entry + *(getit4b+i)]=(index[l]+1);
                             *(getit4b+i) = (*(getit4b+i)+1);
                         }
-                        if(*(getit1b+i)<(*entry+1)){ // which isotope?
+                        
+                        // Which isotope?
+                        if(*(getit1b+i)<(*entry+1)){ 
                             getit1[i**entry+*(getit1b+i)]=(k+1);
                             *(getit1b+i) = (*(getit1b+i)+1);
                         }
-                        if(*(getit6b+i)<(*entry+1)){ // which charge level?
+                        
+                        // Which charge level?
+                        if(*(getit6b+i)<(*entry+1)){ 
                             getit6[i**entry+*(getit6b+i)]=(isomat4[k]);
                             *(getit6b+i) = (*(getit6b+i)+1);
                         }
-                        if(*(getit5b+i)<(*entry+1)){ // large or small mass tolerance?
+                        
+                        // Large or small mass tolerance?
+                        if(*(getit5b+i)<(*entry+1)){ 
                             if( (dat1.mass[index[l]]<=(thismassup2 + isomat1[k])) && (dat1.mass[index[l]]>=(thismasslow2 + isomat1[k]))){
                                 getit5[i**entry+*(getit5b+i)]=1; // 1 = small
                                 *(getit5b+i) = (*(getit5b+i)+1);
@@ -204,7 +243,9 @@ void mass(  double *mass,
                                 *(getit5b+i) = (*(getit5b+i)+1);
                             };
                         }
+                        
                         isomat3[k]=isomat3[k]+1;
+                        
                     } // if within mass-window
                 } // for l
             } // for k
@@ -217,7 +258,7 @@ void mass(  double *mass,
     for(j=0;j<(size_t)(*a-1);j++){if(*(getit2b+j)>entry2){*entry=*(getit2b+j);};};
     for(j=0;j<(size_t)(*a-1);j++){if(*(getit4b+j)>entry2){*entry=*(getit4b+j);};};
     for(j=0;j<(size_t)(*a-1);j++){if(*(getit5b+j)>entry2){*entry=*(getit5b+j);};};
-
+    
     UNPROTECT(5);
 
     } // main
