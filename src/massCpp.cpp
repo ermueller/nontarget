@@ -44,9 +44,8 @@ void mass(  double *mass,
     
     //Initialize variables
     size_t i=0, k=0, j=0, do_at=0, l=0, upcount=0, lowcount=0, rtup=0, rtlow=0, howmany=0;
-    int entry2=*entry, sortnum=0;
-    double uptol, lowtol, thismasslow, thismasslow2, thismassup, thismassup2, time_used_a, time_used_b=0, time_used_c=0;
-    clock_t start, end;
+    int entry2=*entry, sortnum=0, testy;
+    double uptol, lowtol, thismasslow, thismasslow2, thismassup, thismassup2;
     
 
     //Generate index vectors:
@@ -142,7 +141,7 @@ void mass(  double *mass,
             sort(index.begin(), index.end(), [&](int i1, int i2) { return datmass[i1] < datmass[i2]; });
             
             // Alternative old way: Sort index vector by mass (see "dat.operator()")
-            // This is slow because of the struct thing, I think
+            // This is slow because of the struct thing, I think. Lambdas are the fastest you could probably do here.
             
             // sort(index.begin(), index.end(), dat1);
 
@@ -170,7 +169,6 @@ void mass(  double *mass,
         
         // If there are peaks in the vector
         if(howmany>0){
-            start = clock();
             if(*ppm2==1){
                 
                 //Get mass tolerance (if supplied in ppm)
