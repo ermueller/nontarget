@@ -68,7 +68,10 @@ pattern.search  <-  function(
         
         # (1.2.2)
         # Variables for mass increment validation
-        max_dabund <- max(isomat[,3]) # Max relative abundance of all isotopes compared to the monoisotope
+        # Max relative abundance of all isotopes compared to the monoisotope
+        max_dabund <- max(isomat[,3])
+        
+        # Counts for how many 
         countrem1 <- c(0)
         countrem2 <- c(0)
         countrem3 <- c(0)
@@ -91,13 +94,15 @@ pattern.search  <-  function(
         group5 <- rep("0",n_peaks)      # store charge level
         group6 <- c()                # store charge level
         
-        # (2)
+        # (2) Use the C++ "mass"-method from massCpp.cpp to screen for mass increments
         cat("\n (2) Screen for mass increments ... ")
         if(ppm==TRUE){
             ppm2=1
         }else{
             ppm2=2
         }
+        
+        # Since arrays need to be initialized for C++, we need to this in R beforehand.
         isotope_cpp       <- rep(0,nrow(peaklist)*entry)
         iso_from_cpp      <- rep(0,nrow(peaklist)*entry)
         iso_to_cpp        <- rep(0,nrow(peaklist)*entry)
@@ -137,6 +142,7 @@ pattern.search  <-  function(
             is_isotope <- any(result[15][[1]][((i-1)*entry+1):((i-1)*entry+entry)]!=0)
             has_isotope <- any(result[16][[1]][((i-1)*entry+1):((i-1)*entry+entry)]!=0)
             
+            # Concatenate relevant peaks/information/charge/etc with a "/" for each peak
             if(is_isotope){
                 
                 # Which isotope
@@ -171,466 +177,326 @@ pattern.search  <-  function(
         if(deter==FALSE){
             cat("\n (3) Check plausibility ... ")
             
-            # (3) Remove invalid dmass-links based on rules (1) to (3)
-            ST_2 <- system.time(
-                for(i in 1:length(iso_to)){
+            # This function is because the clean-up after every rule is exactly the same
+            e <- environment()
+            clean_up <- function(){
                 
-                # Is there anything to check?
-                    if(iso_to[i]!="0"){
+                # We have to do this with environments since we can't set variables outside a function
+                # from within a function otherwise
+               
+                with(e,{ # Behave as if "e" is actually our environment
+                    
+                    # Rewrite isomat to change the count of the current isotope
+                    if(any(!iso_to_keep)){
+                        isomat[as.numeric(iso_name_split[!iso_to_keep]),4] <- isomat[as.numeric(iso_name_split[!iso_to_keep]),4]-1
+                    }
+                    
+                    # Rewrite the entries
+                    iso_to[i] <- paste(c("0", iso_to_split[iso_to_keep]),sep="/",collapse="/")
+                    iso_name[i] <- paste(c("0",iso_name_split[iso_to_keep]),sep="/",collapse="/")
+                    iso_tolerance[i] <- paste(c("0",iso_tolerance_split[iso_to_keep]),sep="/",collapse="/")
+                    iso_charge[i] <- paste(c("0",iso_charge_split[iso_to_keep]),sep="/",collapse="/")
+                    
+                    if(iso_name[i] == "0"){
+                        iso_name[i] <- "none"
+                    }
+                })
+            }
+            
+            # (3) Remove invalid dmass-links based on rules (1) to (3)
+            ST_2 <- system.time({
+
+            # Pre-split all entries
+            iso_to_split_all        <- lapply(iso_to,function(x)strsplit(x,"/")[[1]][-1])
+            iso_name_split_all      <- lapply(iso_name,function(x)strsplit(x,"/")[[1]][-1])
+            iso_tolerance_split_all <- lapply(iso_tolerance,function(x)strsplit(x,"/")[[1]][-1])
+            iso_charge_split_all    <- lapply(iso_charge,function(x)as.numeric(strsplit(x,"/")[[1]][-1]))
+            iso_to_keep <- list()
+            
+            # Go through all indices where tentatively isotopes have been found
+            for(i in .Internal(which(iso_to != "0"))){
+                
+                    # Split the current values by "/"
+                    iso_to_split <- iso_to_split_all[[i]]
+                    iso_name_split <- iso_name_split_all[[i]]
+                    iso_tolerance_split <- iso_tolerance_split_all[[i]]
+                    iso_charge_split <- iso_charge_split_all[[i]]
+                    iso_to_keep <- rep(TRUE,length(iso_to_split))
+                    
+                    # (3.1) Rule 1: intensity ratio check over ALL isotopes at charge level ###
+                    if(rules[1]=="TRUE"){
                         
-                        
-                        iso_to_split <- c(strsplit(iso_to[i],"/")[[1]][-1])
-                        that2 <- rep(TRUE,length(iso_to_split))
-                        
-                        # (3.1) Rule 1: intensity ratio check over ALL isotopes at charge level ###
-                        if(rules[1]=="TRUE"){
+                        # Go through all split elements
+                        for(j in 1:length(iso_to_split)){
                             
+                            # Exclude peaks from this check with more than one atom distance
+                            if(isomat[as.numeric(iso_name_split[j]),5] == 1){
+                                
+                                # Calculate the minimum possible mass
+                                to_peak_expected_int_min      <- peaklist[as.numeric(iso_to_split[j]),2]*(1-inttol)
+                                current_peak_expected_int_max <- peaklist[i,2]*(1+inttol)
+                                
+                                possnumb <- (to_peak_expected_int_min/current_peak_expected_int_max) * max_dabund # Based on isotope with largest relative abundance
+                                
+                                if(possnumb < 1){
+                                    possnumb <- 1
+                                }
+                                
+                                # Largest charge z, minimum mass of hydrogen
+                                if((possnumb*3.0078)>(peaklist[i,1]*max(iso_charge_split))){ 
+                                    iso_to_keep[j] <- FALSE
+                                    countrem1 <- c(countrem1+1)
+                                }
+                            }
+                        }
+                        
+                        # remove entries in iso_to[i] ("to"), iso_from[->i] ("from") and isomat!
+                        iso_to_keep[isomat[as.numeric(iso_name_split),5] != 1] <- TRUE # if double-distanced
+                        
+                        for(m in 1:length(iso_to_keep)){
+                            if(iso_to_keep[m]==FALSE){
+                                iso_from[as.numeric(iso_to_split[m])] <- sub(paste("/",i,sep=""),"",iso_from[as.numeric(iso_to_split[m])])
+                            }
+                        }
+                        
+                        clean_up()
+                    } # RULE1
+                    
+                    #
+                    ##########################################################################
+                    # (3.2) RULE2: intensity ratio check with LARGE mass tolerance ###########
+                    if(any(iso_to_keep)){ # anything left to check?
+                        if(rules[2]=="TRUE"){
+                            iso_to_split <- c(strsplit(iso_to[i],"/")[[1]][-1])
+                            iso_to_keep <- rep(TRUE,length(iso_to_split))
                             iso_name_split <- c(strsplit(iso_name[i],"/")[[1]][-1])
-                            iso_tolerance_split <- c(strsplit(iso_tolerance[i],"/")[[1]][-1])
+                            that6 <- c(iso_to_split[duplicated(iso_to_split)==FALSE]) 
+                            that7 <- c(isomat[as.numeric(iso_name_split),5]==1)
+                            #iso_tolerance_split <- c(strsplit(iso_tolerance[i],"/")[[1]][-1])
                             iso_charge_split <- c(as.numeric(strsplit(iso_charge[i],"/")[[1]][-1]))
-                            
-                            for(j in 1:length(iso_to_split)){
-                                if(isomat[as.numeric(iso_name_split[j]),5]==1){ # exclude double-distanced peaks
-                                    # including intensity tolerances "inttol"
-                                    possnumb <- c(((peaklist[as.numeric(iso_to_split[j]),2]*(1-inttol))/(peaklist[i,2]*(1+inttol)))*max_dabund) # based on isotope with largest max_dabund
+                            for(j in 1:length(that6)){
+                                if(any(that7[iso_to_split==that6[j]])){ # only on single-distanced peaks!
+                                    max_dabund2 <- min(1/isomat[as.numeric(iso_name_split[iso_to_split==that6[j]&that7==TRUE]),3])
+                                    ratioC <- max(isomat[as.numeric(iso_name_split[iso_to_split==that6[j]&that7==TRUE]),6])
+                                    possnumb <- min(((peaklist[as.numeric(iso_to_split[iso_to_split==that6[j]]),2]*(1-inttol))/(peaklist[i,2]*(1+inttol)))*max_dabund2)
                                     if(possnumb<1){possnumb <- c(1)}
-                                    if((possnumb*3.0078)>(peaklist[i,1]*max(iso_charge_split))){ # largest charge z, minimum mass of hydrogen
-                                        that2[j] <- FALSE
-                                        countrem1 <- c(countrem1+1)
-                                    } # if ...
-                                } # if single-distanced ...
-                            } # for j ...
-                            # remove entries in iso_to[i] ("to"), iso_from[->i] ("from") and isomat!
-                            that2[isomat[as.numeric(iso_name_split),5]!=1] <- TRUE # if double-distanced
-                            for(m in 1:length(that2)){
-                                if(that2[m]==FALSE){
+                                    possmass <- min(isos[as.logical(match(isos[,1],isos[as.logical(match(isos[,2],isomat[as.numeric(iso_name_split[iso_to_split==that6[j]&that7==TRUE]),1],nomatch=FALSE)),1],nomatch=FALSE)),3])
+                                    if(ratioC!=0){
+                                        if((possnumb*possmass+((possnumb/ratioC)*12))>(peaklist[i,1]*max(isomat[as.numeric(iso_name_split[iso_to_split==that6[j]&that7==TRUE]),7]))){ # include ratios to C! BEWARE if ration=0->Inf->alway>mass
+                                            iso_to_keep[as.numeric(iso_to_split)==as.numeric(that6[j])] <- FALSE
+                                            countrem2 <- c(countrem2+1)
+                                        } # if ...
+                                    }else{
+                                        if((possnumb*possmass)>(peaklist[i,1]*max(isomat[as.numeric(iso_name_split[iso_to_split==that6[j]&that7==TRUE]),7]))){ # include ratio to C
+                                            iso_to_keep[iso_to_split==that6[j]] <- FALSE
+                                            countrem2 <- c(countrem2+1)
+                                        } # if ...
+                                    }
+                                } #
+                            } # for
+                            # remove entries in iso_from[i] (i.e."to") only  / NOT "from!"
+                            # reset: keep non-single distanced peaks!
+                            iso_to_keep[isomat[as.numeric(iso_name_split),5]!=1] <- TRUE
+                            for(m in 1:length(iso_to_keep)){
+                                if(iso_to_keep[m]==FALSE){
                                     iso_from[as.numeric(iso_to_split[m])] <- sub(paste("/",i,sep=""),"",iso_from[as.numeric(iso_to_split[m])])
                                 }
                             }
-                            if(any(that2==FALSE)){
-                                isomat[as.numeric(iso_name_split[that2==FALSE]),4] <- isomat[as.numeric(iso_name_split[that2==FALSE]),4]-1
+                            clean_up()
+                        } # if
+                    } # RULE2
+                    #
+                    ##########################################################################
+                    # (3.3) RULE3: intensity ratio check with SMALL mass tolerance ###########
+                    if(rules[3]=="TRUE"){
+                        if(any(iso_to_keep)){# anything left to check?
+                            iso_to_split <- c(strsplit(iso_to[i],"/")[[1]][-1])
+                            iso_to_keep <- rep(TRUE,length(iso_to_split))
+                            iso_name_split <- c(strsplit(iso_name[i],"/")[[1]][-1])
+                            that7 <- c(isomat[as.numeric(iso_name_split),5]==1)
+                            iso_tolerance_split <- c(strsplit(iso_tolerance[i],"/")[[1]][-1])
+                            iso_charge_split <- c(as.numeric(strsplit(iso_charge[i],"/")[[1]][-1]))
+                            for(j in 1:length(iso_to_split)){
+                                if( iso_tolerance_split[j]=="small" && that7[j]==TRUE ){ # within small mass tolerance? single distanced?
+                                    max_dabund2 <- c(1/isomat[as.numeric(iso_name_split[j]),3])
+                                    ratioC <- c(isomat[as.numeric(iso_name_split[j]),6])
+                                    possnumb <- c(((peaklist[as.numeric(iso_to_split[j]),2]*(1-inttol))/(peaklist[i,2]*(1+inttol)))*max_dabund2)
+                                    if(possnumb<1){possnumb <- c(1)}
+                                    possmass <- min(isos[as.logical(match(isos[,1],isos[as.logical(match(isos[,2],isomat[as.numeric(iso_name_split[j]),1],nomatch=FALSE)),1],nomatch=FALSE)),3])
+                                    if(ratioC!=0){
+                                        if((possnumb*possmass+((possnumb/ratioC)*12))>(peaklist[i,1]*c(isomat[as.numeric(iso_name_split[j]),7]))){ # include ratios to C! BEWARE if ration=0->Inf->alway>mass
+                                            iso_to_keep[j] <- FALSE
+                                        } # if ...
+                                    }else{
+                                        if((possnumb*possmass)>(peaklist[i,1]*c(isomat[as.numeric(iso_name_split[j]),7]))){ # include ratio to C
+                                            iso_to_keep[j] <- FALSE
+                                        } # if ...
+                                    }
+                                }    # if with small mass range
+                            }    # for all possible isotopes
+                            # remove entries in iso_from[i] (i.e."to") only
+                            # reset: keep non-single distanced peaks!
+                            iso_to_keep[isomat[as.numeric(iso_name_split),5]!=1] <- TRUE
+                            for(m in 1:length(iso_to_keep)){ 
+                                if(iso_to_keep[m]==FALSE){
+                                    #if(length(iso_to_split[iso_to_split==iso_to_split[m]])==1){ # if several hits: do not remove entry but set to "large"
+                                    iso_from[as.numeric(iso_to_split[m])] <- sub(paste("/",i,sep=""),"",iso_from[as.numeric(iso_to_split[m])])
+                                    countrem3 <- c(countrem3+1)
+                                    #}else{
+                                    #iso_to_keep[m] <- TRUE
+                                    #iso_tolerance_split[m] <- "large"
+                                    #countrem3 <- c(countrem3+1)
+                                    #}
+                                }
                             }
-                            iso_to_split <- iso_to_split[that2]
-                            iso_name_split <- iso_name_split[that2]
-                            iso_tolerance_split <- iso_tolerance_split[that2]
-                            iso_charge_split <- iso_charge_split[that2]
-                            if(any(that2)){
-                                that4 <- c()
-                                that5 <- c()
-                                that20 <- c()
-                                that200 <- c()
-                                for(n in 1:length(iso_to_split)){
-                                    that4 <- paste(that4,iso_to_split[n],sep="/")
-                                    that5 <- paste(that5,iso_name_split[n],sep="/")
-                                    that20 <- paste(that20,iso_tolerance_split[n],sep="/")
-                                    that200 <- paste(that200,iso_charge_split[n],sep="/")
+                            clean_up()
+                        }# if any in iso_to_keep
+                    }# rule 3
+                    ##########################################################################
+                    # (3.4) RULE 4: minimum intensity for all used isotopes reached? #########
+                    if(rules[4]=="TRUE"){
+                        if(any(iso_to_keep)){# anything left to check?
+                            iso_to_split <- c(strsplit(iso_to[i],"/")[[1]][-1])
+                            iso_to_keep <- rep(TRUE,length(iso_to_split))
+                            iso_name_split <- c(strsplit(iso_name[i],"/")[[1]][-1])
+                            iso_tolerance_split <- c(strsplit(iso_tolerance[i],"/")[[1]][-1])
+                            iso_charge_split <- c(as.numeric(strsplit(iso_charge[i],"/")[[1]][-1]))
+                            for(j in 1:length(iso_to_split)){
+                                if(isomat[as.numeric(iso_name_split[j]),5]==1){ # exclude double-distanced peaks
+                                    if(((peaklist[as.numeric(iso_to_split[j]),2]+(inttol*peaklist[as.numeric(iso_to_split[j]),2]))/(peaklist[i,2]-(inttol*peaklist[i,2])))<min(isomat[,3])){
+                                        iso_to_keep[j] <- FALSE
+                                        countrem4 <- c(countrem4+1)        
+                                    }
                                 }
-                                iso_to[i] <- paste("0",that4,sep="")
-                                iso_name[i] <- paste("0",that5,sep="")
-                                iso_tolerance[i] <- paste("0",that20,sep="")
-                                iso_charge[i] <- paste("0",that200,sep="")
-                            }else{
-                                iso_to[i] <- "0"
-                                iso_name[i] <- "none" # (1) which isotope?
-                                iso_tolerance[i] <- "0"
-                                iso_charge[i] <- "0"
                             }
-                        } # RULE1
-                        #
-                        ##########################################################################
-                        # (3.2) RULE2: intensity ratio check with LARGE mass tolerance ###########
-                        if(any(that2)){ # anything left to check?
-                            if(rules[2]=="TRUE"){
-                                iso_to_split <- c(strsplit(iso_to[i],"/")[[1]][-1])
-                                that2 <- rep(TRUE,length(iso_to_split))
-                                iso_name_split <- c(strsplit(iso_name[i],"/")[[1]][-1])
-                                that6 <- c(iso_to_split[duplicated(iso_to_split)==FALSE]) 
-                                that7 <- c(isomat[as.numeric(iso_name_split),5]==1)
-                                #iso_tolerance_split <- c(strsplit(iso_tolerance[i],"/")[[1]][-1])
-                                iso_charge_split <- c(as.numeric(strsplit(iso_charge[i],"/")[[1]][-1]))
-                                for(j in 1:length(that6)){
-                                    if(any(that7[iso_to_split==that6[j]])){ # only on single-distanced peaks!
-                                        max_dabund2 <- min(1/isomat[as.numeric(iso_name_split[iso_to_split==that6[j]&that7==TRUE]),3])
-                                        ratioC <- max(isomat[as.numeric(iso_name_split[iso_to_split==that6[j]&that7==TRUE]),6])
-                                        possnumb <- min(((peaklist[as.numeric(iso_to_split[iso_to_split==that6[j]]),2]*(1-inttol))/(peaklist[i,2]*(1+inttol)))*max_dabund2)
-                                        if(possnumb<1){possnumb <- c(1)}
-                                        possmass <- min(isos[as.logical(match(isos[,1],isos[as.logical(match(isos[,2],isomat[as.numeric(iso_name_split[iso_to_split==that6[j]&that7==TRUE]),1],nomatch=FALSE)),1],nomatch=FALSE)),3])
-                                        if(ratioC!=0){
-                                            if((possnumb*possmass+((possnumb/ratioC)*12))>(peaklist[i,1]*max(isomat[as.numeric(iso_name_split[iso_to_split==that6[j]&that7==TRUE]),7]))){ # include ratios to C! BEWARE if ration=0->Inf->alway>mass
-                                                that2[as.numeric(iso_to_split)==as.numeric(that6[j])] <- FALSE
-                                                countrem2 <- c(countrem2+1)
-                                            } # if ...
+                            # remove entries in iso_to[i] ("to"), iso_from[->i] ("from") and isomat!
+                            iso_to_keep[isomat[as.numeric(iso_name_split),5]!=1] <- TRUE # if double-distanced
+                            for(m in 1:length(iso_to_keep)){
+                                if(iso_to_keep[m]==FALSE){
+                                    iso_from[as.numeric(iso_to_split[m])] <- sub(paste("/",i,sep=""),"",iso_from[as.numeric(iso_to_split[m])])
+                                }
+                            }
+                            clean_up()
+                        }# if any in iso_to_keep
+                    } # rule 4
+                    ##########################################################################
+                    # (3.5) RULE 5: minimum intensity for isotopes within large reached? #####
+                    if(rules[5]=="TRUE"){
+                        if(any(iso_to_keep)){ # anything left to check?
+                            iso_to_split <- c(strsplit(iso_to[i],"/")[[1]][-1])
+                            iso_to_keep <- rep(TRUE,length(iso_to_split))
+                            iso_name_split <- c(strsplit(iso_name[i],"/")[[1]][-1])
+                            iso_tolerance_split <- c(strsplit(iso_tolerance[i],"/")[[1]][-1])
+                            iso_charge_split <- c(as.numeric(strsplit(iso_charge[i],"/")[[1]][-1]))
+                            for(j in 1:length(iso_to_split)){
+                                if(isomat[as.numeric(iso_name_split[j]),5]==1){ # exclude double-distanced peaks
+                                    if(
+                                        ((peaklist[as.numeric(iso_to_split[j]),2]*(1+inttol))/(peaklist[i,2]*(1-inttol)))
+                                        < min(isomat[as.numeric(iso_name_split[iso_to_split==iso_to_split[j]]),3])
+                                    ){
+                                        iso_to_keep[j] <- FALSE
+                                        countrem5 <- c(countrem5+1)        
+                                    }
+                                }
+                            }
+                            # remove entries in iso_to[i] ("to"), iso_from[->i] ("from") and isomat!
+                            iso_to_keep[isomat[as.numeric(iso_name_split),5]!=1] <- TRUE # if double-distanced
+                            for(m in 1:length(iso_to_keep)){
+                                if(iso_to_keep[m]==FALSE){
+                                    iso_from[as.numeric(iso_to_split[m])] <- sub(paste("/",i,sep=""),"",iso_from[as.numeric(iso_to_split[m])])
+                                }
+                            }
+                            clean_up()
+                        }# if any in iso_to_keep
+                    } # rule 5
+                    ##########################################################################
+                    # (3.6) RULE 6: minimum intensity for isotopes within small reached? #####
+                    if(rules[6]=="TRUE"){
+                        if(any(iso_to_keep)){# anything left to check?
+                            iso_to_split <- c(strsplit(iso_to[i],"/")[[1]][-1])
+                            iso_to_keep <- rep(TRUE,length(iso_to_split))
+                            iso_name_split <- c(strsplit(iso_name[i],"/")[[1]][-1])
+                            that7 <- c(isomat[as.numeric(iso_name_split),5]==1)
+                            iso_tolerance_split <- c(strsplit(iso_tolerance[i],"/")[[1]][-1])
+                            iso_charge_split <- c(as.numeric(strsplit(iso_charge[i],"/")[[1]][-1]))
+                            for(j in 1:length(iso_to_split)){
+                                if( iso_tolerance_split[j]=="small" && that7[j]==TRUE ){
+                                    if(
+                                        ((peaklist[as.numeric(iso_to_split[j]),2]*(1+inttol))/(peaklist[i,2]*(1-inttol)))
+                                        < (isomat[as.numeric(iso_name_split[j]),3])
+                                    ){
+                                        iso_to_keep[j] <- FALSE
+                                        countrem6 <- c(countrem6+1)        
+                                    }
+                                }
+                            }
+                            # remove entries in iso_from[i] (i.e."to") only
+                            # reset: keep non-single distanced peaks!
+                            iso_to_keep[isomat[as.numeric(iso_name_split),5]!=1] <- TRUE
+                            for(m in 1:length(iso_to_keep)){ 
+                                if(iso_to_keep[m]==FALSE){ 
+                                    #if(length(iso_to_split[iso_to_split==iso_to_split[m]])==1){ # if several hits: do not remove entry but set to "large"
+                                    iso_from[as.numeric(iso_to_split[m])] <- sub(paste("/",i,sep=""),"",iso_from[as.numeric(iso_to_split[m])])
+                                    countrem6 <- c(countrem6+1)
+                                    #}else{
+                                    #iso_to_keep[m] <- TRUE
+                                    #iso_tolerance_split[m] <- "large"
+                                    #countrem6 <- c(countrem6+1)
+                                    #}
+                                }
+                            }
+                            clean_up()
+                        } # if any in iso_to_keep
+                    } # rule 6
+                    ##########################################################################
+                    # (3.7) RULE 7: carbon ratio check with SMALL mass tolerance #############
+                    if(rules[7]=="TRUE"){
+                        if(any(iso_to_keep)){ # anything left to check?
+                            iso_to_split <- c(strsplit(iso_to[i],"/")[[1]][-1])
+                            iso_to_keep <- rep(TRUE,length(iso_to_split))
+                            iso_name_split <- c(strsplit(iso_name[i],"/")[[1]][-1])
+                            that7 <- c(isomat[as.numeric(iso_name_split),5]==1)
+                            iso_tolerance_split <- c(strsplit(iso_tolerance[i],"/")[[1]][-1])
+                            iso_charge_split <- c(as.numeric(strsplit(iso_charge[i],"/")[[1]][-1]))
+                            for(j in 1:length(iso_to_split)){
+                                if(iso_tolerance_split[j]=="small" && that7[j]==TRUE && isomat[as.numeric(iso_name_split[j]),1]!="13C" && isomat[as.numeric(iso_name_split[j]),6]!=0 ){
+                                    max_dabund2 <- c(1/isomat[as.numeric(iso_name_split[j]),3])
+                                    ratioC <- c(isomat[as.numeric(iso_name_split[j]),6])
+                                    possnumb <- c(((peaklist[as.numeric(iso_to_split[j]),2]*(1-inttol))/(peaklist[i,2]*(1+inttol)))*max_dabund2)
+                                    if(possnumb<1){possnumb <- c(1)} # must have at least one atom for a peak signal
+                                    numbC <- c(possnumb/ratioC)
+                                    if(numbC<1){numbC <- c(1)} # must have at least one carbon atom!
+                                    if(peaklist[i,2]*isomat[isomat[,1]=="13C",3][1]*(1/numbC)>cutint){
+                                        if(rules[10]==FALSE){ # beware of interfering peaks?
+                                            if(any(isomat[as.numeric(iso_name_split),1]=="13C")==FALSE){
+                                                iso_to_keep[j] <- FALSE
+                                                countrem7 <- c(countrem7+1)
+                                            }
                                         }else{
-                                            if((possnumb*possmass)>(peaklist[i,1]*max(isomat[as.numeric(iso_name_split[iso_to_split==that6[j]&that7==TRUE]),7]))){ # include ratio to C
-                                                that2[iso_to_split==that6[j]] <- FALSE
-                                                countrem2 <- c(countrem2+1)
-                                            } # if ...
-                                        }
-                                    } #
-                                } # for
-                                # remove entries in iso_from[i] (i.e."to") only  / NOT "from!"
-                                # reset: keep non-single distanced peaks!
-                                that2[isomat[as.numeric(iso_name_split),5]!=1] <- TRUE
-                                for(m in 1:length(that2)){
-                                    if(that2[m]==FALSE){
-                                        iso_from[as.numeric(iso_to_split[m])] <- sub(paste("/",i,sep=""),"",iso_from[as.numeric(iso_to_split[m])])
-                                    }
-                                }
-                                if(any(that2==FALSE)){
-                                    isomat[as.numeric(iso_name_split[that2==FALSE]),4] <- isomat[as.numeric(iso_name_split[that2==FALSE]),4]-1
-                                }
-                                iso_to_split <- iso_to_split[that2]
-                                iso_name_split <- iso_name_split[that2]
-                                iso_tolerance_split <- iso_tolerance_split[that2]
-                                iso_charge_split <- iso_charge_split[that2]
-                                if(any(that2)){
-                                    that4 <- c()
-                                    that5 <- c()
-                                    that20 <- c()
-                                    that200 <- c()
-                                    for(n in 1:length(iso_to_split)){
-                                        that4 <- paste(that4,iso_to_split[n],sep="/")
-                                        that5 <- paste(that5,iso_name_split[n],sep="/")
-                                        that20 <- paste(that20,iso_tolerance_split[n],sep="/")
-                                        that200 <- paste(that200,iso_charge_split[n],sep="/")
-                                    }
-                                    iso_to[i] <- paste("0",that4,sep="")
-                                    iso_name[i] <- paste("0",that5,sep="")
-                                    iso_tolerance[i] <- paste("0",that20,sep="")
-                                    iso_charge[i] <- paste("0",that200,sep="")
-                                }else{
-                                    iso_to[i] <- "0"
-                                    iso_name[i] <- "none" # (1) which isotope?
-                                    iso_tolerance[i] <- "0"
-                                    iso_charge[i] <- "0"
-                                }
-                            } # if
-                        } # RULE2
-                        #
-                        ##########################################################################
-                        # (3.3) RULE3: intensity ratio check with SMALL mass tolerance ###########
-                        if(rules[3]=="TRUE"){
-                            if(any(that2)){# anything left to check?
-                                iso_to_split <- c(strsplit(iso_to[i],"/")[[1]][-1])
-                                that2 <- rep(TRUE,length(iso_to_split))
-                                iso_name_split <- c(strsplit(iso_name[i],"/")[[1]][-1])
-                                that7 <- c(isomat[as.numeric(iso_name_split),5]==1)
-                                iso_tolerance_split <- c(strsplit(iso_tolerance[i],"/")[[1]][-1])
-                                iso_charge_split <- c(as.numeric(strsplit(iso_charge[i],"/")[[1]][-1]))
-                                for(j in 1:length(iso_to_split)){
-                                    if( iso_tolerance_split[j]=="small" && that7[j]==TRUE ){ # within small mass tolerance? single distanced?
-                                        max_dabund2 <- c(1/isomat[as.numeric(iso_name_split[j]),3])
-                                        ratioC <- c(isomat[as.numeric(iso_name_split[j]),6])
-                                        possnumb <- c(((peaklist[as.numeric(iso_to_split[j]),2]*(1-inttol))/(peaklist[i,2]*(1+inttol)))*max_dabund2)
-                                        if(possnumb<1){possnumb <- c(1)}
-                                        possmass <- min(isos[as.logical(match(isos[,1],isos[as.logical(match(isos[,2],isomat[as.numeric(iso_name_split[j]),1],nomatch=FALSE)),1],nomatch=FALSE)),3])
-                                        if(ratioC!=0){
-                                            if((possnumb*possmass+((possnumb/ratioC)*12))>(peaklist[i,1]*c(isomat[as.numeric(iso_name_split[j]),7]))){ # include ratios to C! BEWARE if ration=0->Inf->alway>mass
-                                                that2[j] <- FALSE
-                                            } # if ...
-                                        }else{
-                                            if((possnumb*possmass)>(peaklist[i,1]*c(isomat[as.numeric(iso_name_split[j]),7]))){ # include ratio to C
-                                                that2[j] <- FALSE
-                                            } # if ...
-                                        }
-                                    }    # if with small mass range
-                                }    # for all possible isotopes
-                                # remove entries in iso_from[i] (i.e."to") only
-                                # reset: keep non-single distanced peaks!
-                                that2[isomat[as.numeric(iso_name_split),5]!=1] <- TRUE
-                                for(m in 1:length(that2)){ 
-                                    if(that2[m]==FALSE){
-                                        #if(length(iso_to_split[iso_to_split==iso_to_split[m]])==1){ # if several hits: do not remove entry but set to "large"
-                                        iso_from[as.numeric(iso_to_split[m])] <- sub(paste("/",i,sep=""),"",iso_from[as.numeric(iso_to_split[m])])
-                                        countrem3 <- c(countrem3+1)
-                                        #}else{
-                                        #that2[m] <- TRUE
-                                        #iso_tolerance_split[m] <- "large"
-                                        #countrem3 <- c(countrem3+1)
-                                        #}
-                                    }
-                                }
-                                if(any(that2==FALSE)){isomat[as.numeric(iso_name_split[that2==FALSE]),4] <- isomat[as.numeric(iso_name_split[that2==FALSE]),4]-1}
-                                iso_to_split <- iso_to_split[that2]
-                                iso_name_split <- iso_name_split[that2]
-                                iso_tolerance_split <- iso_tolerance_split[that2]
-                                iso_charge_split <- iso_charge_split[that2]
-                                if(any(that2)){
-                                    that4 <- c()
-                                    that5 <- c()
-                                    that20 <- c()
-                                    that200 <- c()
-                                    for(n in 1:length(iso_to_split)){
-                                        that4 <- paste(that4,iso_to_split[n],sep="/")
-                                        that5 <- paste(that5,iso_name_split[n],sep="/")
-                                        that20 <- paste(that20,iso_tolerance_split[n],sep="/")
-                                        that200 <- paste(that200,iso_charge_split[n],sep="/")
-                                    }
-                                    iso_to[i] <- paste("0",that4,sep="")
-                                    iso_name[i] <- paste("0",that5,sep="")
-                                    iso_tolerance[i] <- paste("0",that20,sep="")
-                                    iso_charge[i] <- paste("0",that200,sep="")
-                                }else{
-                                    iso_to[i] <- "0"
-                                    iso_name[i] <- "none" # (1) which isotope?
-                                    iso_tolerance[i] <- "0"
-                                    iso_charge[i] <- "0"
-                                }
-                            }# if any in that2
-                        }# rule 3
-                        ##########################################################################
-                        # (3.4) RULE 4: minimum intensity for all used isotopes reached? #########
-                        if(rules[4]=="TRUE"){
-                            if(any(that2)){# anything left to check?
-                                iso_to_split <- c(strsplit(iso_to[i],"/")[[1]][-1])
-                                that2 <- rep(TRUE,length(iso_to_split))
-                                iso_name_split <- c(strsplit(iso_name[i],"/")[[1]][-1])
-                                iso_tolerance_split <- c(strsplit(iso_tolerance[i],"/")[[1]][-1])
-                                iso_charge_split <- c(as.numeric(strsplit(iso_charge[i],"/")[[1]][-1]))
-                                for(j in 1:length(iso_to_split)){
-                                    if(isomat[as.numeric(iso_name_split[j]),5]==1){ # exclude double-distanced peaks
-                                        if(((peaklist[as.numeric(iso_to_split[j]),2]+(inttol*peaklist[as.numeric(iso_to_split[j]),2]))/(peaklist[i,2]-(inttol*peaklist[i,2])))<min(isomat[,3])){
-                                            that2[j] <- FALSE
-                                            countrem4 <- c(countrem4+1)        
-                                        }
-                                    }
-                                }
-                                # remove entries in iso_to[i] ("to"), iso_from[->i] ("from") and isomat!
-                                that2[isomat[as.numeric(iso_name_split),5]!=1] <- TRUE # if double-distanced
-                                for(m in 1:length(that2)){
-                                    if(that2[m]==FALSE){
-                                        iso_from[as.numeric(iso_to_split[m])] <- sub(paste("/",i,sep=""),"",iso_from[as.numeric(iso_to_split[m])])
-                                    }
-                                }
-                                if(any(that2==FALSE)){
-                                    isomat[as.numeric(iso_name_split[that2==FALSE]),4] <- isomat[as.numeric(iso_name_split[that2==FALSE]),4]-1
-                                }
-                                iso_to_split <- iso_to_split[that2]
-                                iso_name_split <- iso_name_split[that2]
-                                iso_tolerance_split <- iso_tolerance_split[that2]
-                                iso_charge_split <- iso_charge_split[that2]
-                                if(any(that2)){
-                                    that4 <- c()
-                                    that5 <- c()
-                                    that20 <- c()
-                                    that200 <- c()
-                                    for(n in 1:length(iso_to_split)){
-                                        that4 <- paste(that4,iso_to_split[n],sep="/")
-                                        that5 <- paste(that5,iso_name_split[n],sep="/")
-                                        that20 <- paste(that20,iso_tolerance_split[n],sep="/")
-                                        that200 <- paste(that200,iso_charge_split[n],sep="/")
-                                    }
-                                    iso_to[i] <- paste("0",that4,sep="")
-                                    iso_name[i] <- paste("0",that5,sep="")
-                                    iso_tolerance[i] <- paste("0",that20,sep="")
-                                    iso_charge[i] <- paste("0",that200,sep="")
-                                }else{
-                                    iso_to[i] <- "0"
-                                    iso_name[i] <- "none" # (1) which isotope?
-                                    iso_tolerance[i] <- "0"
-                                    iso_charge[i] <- "0"
-                                }
-                            }# if any in that2
-                        } # rule 4
-                        ##########################################################################
-                        # (3.5) RULE 5: minimum intensity for isotopes within large reached? #####
-                        if(rules[5]=="TRUE"){
-                            if(any(that2)){ # anything left to check?
-                                iso_to_split <- c(strsplit(iso_to[i],"/")[[1]][-1])
-                                that2 <- rep(TRUE,length(iso_to_split))
-                                iso_name_split <- c(strsplit(iso_name[i],"/")[[1]][-1])
-                                iso_tolerance_split <- c(strsplit(iso_tolerance[i],"/")[[1]][-1])
-                                iso_charge_split <- c(as.numeric(strsplit(iso_charge[i],"/")[[1]][-1]))
-                                for(j in 1:length(iso_to_split)){
-                                    if(isomat[as.numeric(iso_name_split[j]),5]==1){ # exclude double-distanced peaks
-                                        if(
-                                            ((peaklist[as.numeric(iso_to_split[j]),2]*(1+inttol))/(peaklist[i,2]*(1-inttol)))
-                                            < min(isomat[as.numeric(iso_name_split[iso_to_split==iso_to_split[j]]),3])
-                                        ){
-                                            that2[j] <- FALSE
-                                            countrem5 <- c(countrem5+1)        
-                                        }
-                                    }
-                                }
-                                # remove entries in iso_to[i] ("to"), iso_from[->i] ("from") and isomat!
-                                that2[isomat[as.numeric(iso_name_split),5]!=1] <- TRUE # if double-distanced
-                                for(m in 1:length(that2)){
-                                    if(that2[m]==FALSE){
-                                        iso_from[as.numeric(iso_to_split[m])] <- sub(paste("/",i,sep=""),"",iso_from[as.numeric(iso_to_split[m])])
-                                    }
-                                }
-                                if(any(that2==FALSE)){
-                                    isomat[as.numeric(iso_name_split[that2==FALSE]),4] <- isomat[as.numeric(iso_name_split[that2==FALSE]),4]-1
-                                }
-                                iso_to_split <- iso_to_split[that2]
-                                iso_name_split <- iso_name_split[that2]
-                                iso_tolerance_split <- iso_tolerance_split[that2]
-                                iso_charge_split <- iso_charge_split[that2]
-                                if(any(that2)){
-                                    that4 <- c()
-                                    that5 <- c()
-                                    that20 <- c()
-                                    that200 <- c()
-                                    for(n in 1:length(iso_to_split)){
-                                        that4 <- paste(that4,iso_to_split[n],sep="/")
-                                        that5 <- paste(that5,iso_name_split[n],sep="/")
-                                        that20 <- paste(that20,iso_tolerance_split[n],sep="/")
-                                        that200 <- paste(that200,iso_charge_split[n],sep="/")
-                                    }
-                                    iso_to[i] <- paste("0",that4,sep="")
-                                    iso_name[i] <- paste("0",that5,sep="")
-                                    iso_tolerance[i] <- paste("0",that20,sep="")
-                                    iso_charge[i] <- paste("0",that200,sep="")
-                                }else{
-                                    iso_to[i] <- "0"
-                                    iso_name[i] <- "none" # (1) which isotope?
-                                    iso_tolerance[i] <- "0"
-                                    iso_charge[i] <- "0"
-                                }
-                            }# if any in that2
-                        } # rule 5
-                        ##########################################################################
-                        # (3.6) RULE 6: minimum intensity for isotopes within small reached? #####
-                        if(rules[6]=="TRUE"){
-                            if(any(that2)){# anything left to check?
-                                iso_to_split <- c(strsplit(iso_to[i],"/")[[1]][-1])
-                                that2 <- rep(TRUE,length(iso_to_split))
-                                iso_name_split <- c(strsplit(iso_name[i],"/")[[1]][-1])
-                                that7 <- c(isomat[as.numeric(iso_name_split),5]==1)
-                                iso_tolerance_split <- c(strsplit(iso_tolerance[i],"/")[[1]][-1])
-                                iso_charge_split <- c(as.numeric(strsplit(iso_charge[i],"/")[[1]][-1]))
-                                for(j in 1:length(iso_to_split)){
-                                    if( iso_tolerance_split[j]=="small" && that7[j]==TRUE ){
-                                        if(
-                                            ((peaklist[as.numeric(iso_to_split[j]),2]*(1+inttol))/(peaklist[i,2]*(1-inttol)))
-                                            < (isomat[as.numeric(iso_name_split[j]),3])
-                                        ){
-                                            that2[j] <- FALSE
-                                            countrem6 <- c(countrem6+1)        
-                                        }
-                                    }
-                                }
-                                # remove entries in iso_from[i] (i.e."to") only
-                                # reset: keep non-single distanced peaks!
-                                that2[isomat[as.numeric(iso_name_split),5]!=1] <- TRUE
-                                for(m in 1:length(that2)){ 
-                                    if(that2[m]==FALSE){ 
-                                        #if(length(iso_to_split[iso_to_split==iso_to_split[m]])==1){ # if several hits: do not remove entry but set to "large"
-                                        iso_from[as.numeric(iso_to_split[m])] <- sub(paste("/",i,sep=""),"",iso_from[as.numeric(iso_to_split[m])])
-                                        countrem6 <- c(countrem6+1)
-                                        #}else{
-                                        #that2[m] <- TRUE
-                                        #iso_tolerance_split[m] <- "large"
-                                        #countrem6 <- c(countrem6+1)
-                                        #}
-                                    }
-                                }
-                                if(any(that2==FALSE)){
-                                    isomat[as.numeric(iso_name_split[that2==FALSE]),4] <- isomat[as.numeric(iso_name_split[that2==FALSE]),4]-1
-                                }
-                                iso_to_split <- iso_to_split[that2]
-                                iso_name_split <- iso_name_split[that2]
-                                iso_tolerance_split <- iso_tolerance_split[that2]
-                                iso_charge_split <- iso_charge_split[that2]
-                                if(any(that2)){
-                                    that4 <- c()
-                                    that5 <- c()
-                                    that20 <- c()
-                                    that200 <- c()
-                                    for(n in 1:length(iso_to_split)){
-                                        that4 <- paste(that4,iso_to_split[n],sep="/")
-                                        that5 <- paste(that5,iso_name_split[n],sep="/")
-                                        that20 <- paste(that20,iso_tolerance_split[n],sep="/")
-                                        that200 <- paste(that200,iso_charge_split[n],sep="/")
-                                    }
-                                    iso_to[i] <- paste("0",that4,sep="")
-                                    iso_name[i] <- paste("0",that5,sep="")
-                                    iso_tolerance[i] <- paste("0",that20,sep="")
-                                    iso_charge[i] <- paste("0",that200,sep="")
-                                }else{
-                                    iso_to[i] <- "0"
-                                    iso_name[i] <- "none" # (1) which isotope?
-                                    iso_tolerance[i] <- "0"
-                                    iso_charge[i] <- "0"
-                                }
-                            } # if any in that2
-                        } # rule 6
-                        ##########################################################################
-                        # (3.7) RULE 7: carbon ratio check with SMALL mass tolerance #############
-                        if(rules[7]=="TRUE"){
-                            if(any(that2)){ # anything left to check?
-                                iso_to_split <- c(strsplit(iso_to[i],"/")[[1]][-1])
-                                that2 <- rep(TRUE,length(iso_to_split))
-                                iso_name_split <- c(strsplit(iso_name[i],"/")[[1]][-1])
-                                that7 <- c(isomat[as.numeric(iso_name_split),5]==1)
-                                iso_tolerance_split <- c(strsplit(iso_tolerance[i],"/")[[1]][-1])
-                                iso_charge_split <- c(as.numeric(strsplit(iso_charge[i],"/")[[1]][-1]))
-                                for(j in 1:length(iso_to_split)){
-                                    if(iso_tolerance_split[j]=="small" && that7[j]==TRUE && isomat[as.numeric(iso_name_split[j]),1]!="13C" && isomat[as.numeric(iso_name_split[j]),6]!=0 ){
-                                        max_dabund2 <- c(1/isomat[as.numeric(iso_name_split[j]),3])
-                                        ratioC <- c(isomat[as.numeric(iso_name_split[j]),6])
-                                        possnumb <- c(((peaklist[as.numeric(iso_to_split[j]),2]*(1-inttol))/(peaklist[i,2]*(1+inttol)))*max_dabund2)
-                                        if(possnumb<1){possnumb <- c(1)} # must have at least one atom for a peak signal
-                                        numbC <- c(possnumb/ratioC)
-                                        if(numbC<1){numbC <- c(1)} # must have at least one carbon atom!
-                                        if(peaklist[i,2]*isomat[isomat[,1]=="13C",3][1]*(1/numbC)>cutint){
-                                            if(rules[10]==FALSE){ # beware of interfering peaks?
-                                                if(any(isomat[as.numeric(iso_name_split),1]=="13C")==FALSE){
-                                                    that2[j] <- FALSE
-                                                    countrem7 <- c(countrem7+1)
-                                                }
-                                            }else{
-                                                if(
-                                                    any(
-                                                        peaklist[,1]>=(peaklist[i,1]+(1.003355/isomat[as.numeric(iso_name_split[j]),7])-0.5) &
-                                                        peaklist[,1]<=(peaklist[i,1]+(1.003355/isomat[as.numeric(iso_name_split[j]),7])+0.5) &
-                                                        peaklist[,3]>=(peaklist[i,3]+rttol[1]) &
-                                                        peaklist[,3]<=(peaklist[i,3]+rttol[2])
-                                                    )==FALSE
-                                                ){
-                                                    that2[j] <- FALSE
-                                                    countrem7 <- c(countrem7+1)
-                                                }
+                                            if(
+                                                any(
+                                                    peaklist[,1]>=(peaklist[i,1]+(1.003355/isomat[as.numeric(iso_name_split[j]),7])-0.5) &
+                                                    peaklist[,1]<=(peaklist[i,1]+(1.003355/isomat[as.numeric(iso_name_split[j]),7])+0.5) &
+                                                    peaklist[,3]>=(peaklist[i,3]+rttol[1]) &
+                                                    peaklist[,3]<=(peaklist[i,3]+rttol[2])
+                                                )==FALSE
+                                            ){
+                                                iso_to_keep[j] <- FALSE
+                                                countrem7 <- c(countrem7+1)
                                             }
                                         }
                                     }
                                 }
-                                # remove entries in iso_from[i] (i.e."to") only !!!
-                                # reset: keep non-single distanced peaks!
-                                that2[isomat[as.numeric(iso_name_split),5]!=1] <- TRUE
-                                for(m in 1:length(that2)){if(that2[m]==FALSE){iso_from[as.numeric(iso_to_split[m])] <- sub(paste("/",i,sep=""),"",iso_from[as.numeric(iso_to_split[m])])}}
-                                if(any(that2==FALSE)){isomat[as.numeric(iso_name_split[that2==FALSE]),4] <- isomat[as.numeric(iso_name_split[that2==FALSE]),4]-1}
-                                iso_to_split <- iso_to_split[that2]
-                                iso_name_split <- iso_name_split[that2]
-                                iso_tolerance_split <- iso_tolerance_split[that2]
-                                iso_charge_split <- iso_charge_split[that2]
-                                if(any(that2)){
-                                    that4 <- c()
-                                    that5 <- c()
-                                    that20 <- c()
-                                    that200 <- c()
-                                    for(n in 1:length(iso_to_split)){
-                                        that4 <- paste(that4,iso_to_split[n],sep="/")
-                                        that5 <- paste(that5,iso_name_split[n],sep="/")
-                                        that20 <- paste(that20,iso_tolerance_split[n],sep="/")
-                                        that200 <- paste(that200,iso_charge_split[n],sep="/")
-                                    }
-                                    iso_to[i] <- paste("0",that4,sep="")
-                                    iso_name[i] <- paste("0",that5,sep="")
-                                    iso_tolerance[i] <- paste("0",that20,sep="")
-                                    iso_charge[i] <- paste("0",that200,sep="")
-                                }else{
-                                    iso_to[i] <- "0"
-                                    iso_name[i] <- "none" # (1) which isotope?
-                                    iso_tolerance[i] <- "0"
-                                    iso_charge[i] <- "0"
-                                }
-                            }# if any in that2
-                        }# rule 11
-                        ##########################################################################
-                    } # if
+                            }
+                            # remove entries in iso_from[i] (i.e."to") only !!!
+                            # reset: keep non-single distanced peaks!
+                            iso_to_keep[isomat[as.numeric(iso_name_split),5]!=1] <- TRUE
+                            for(m in 1:length(iso_to_keep)){if(iso_to_keep[m]==FALSE){iso_from[as.numeric(iso_to_split[m])] <- sub(paste("/",i,sep=""),"",iso_from[as.numeric(iso_to_split[m])])}}
+                            clean_up()
+                        }# if any in iso_to_keep
+                    }
                 } # for
-            )[3]
+            })[3]
             #it <- data.frame(ID,getit4,getit2,getit1,getit5,getit6)
             #names(it) <- c("ID","to","from","isotope","tol","charge")
             cat("done.")
@@ -1117,12 +983,12 @@ pattern.search  <-  function(
         ############################################################################
         groupcount <- data.frame(charge_isos,rep(0,length(charge_isos)),stringsAsFactors=FALSE)
         names(groupcount) <- c("Charge level","Counts")
-        that2 <- seq(1:length(charge_isos))
+        seq_charge_isos <- 1:length(charge_isos)
         if(length(group6)>0){
             for(i in 1:length(group6)){
                 iso_to_split <- as.numeric(strsplit(as.character(group6[i]),"/")[[1]])
                 iso_name_split <- c()
-                for(j in 1:length(iso_to_split)){iso_name_split <- c(iso_name_split,that2[charge_isos==iso_to_split[j]])}
+                for(j in 1:length(iso_to_split)){iso_name_split <- c(iso_name_split,seq_charge_isos[charge_isos==iso_to_split[j]])}
                 groupcount[iso_name_split,2] <- c(groupcount[iso_name_split,2]+1)
             }
         }else{
@@ -1172,6 +1038,6 @@ pattern.search  <-  function(
             "Rule settings"
         )
         cat("done.\n\n")
-        #return(list(pattern, ST_R1, ST_2, ST_3))
-        return(pattern)
+        return(list(pattern, ST_2, ST_3))
+        #return(pattern)
     }

@@ -40,7 +40,7 @@ rule_1_check <- function(peaklist, iso_name, iso_from, iso_to, iso_tolerance, is
     # If we have to change the isotope information
     if(!all(iso_to_keep)){
         
-        # 
+        # Reduce the count of found isotopes by one for the isotopes that have been remove by the rule
         isomat[as.numeric(iso_name_split[iso_to_keep==FALSE]),4] <- isomat[as.numeric(iso_name_split[iso_to_keep==FALSE]),4]-1
         
         # Go through the list of which ones to keep and remove the ones from iso_from which aren't being kept

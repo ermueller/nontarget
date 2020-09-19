@@ -42,9 +42,11 @@ void mass(  double *mass,
         )
     {
     
+    cout << "Start" << endl;
+    
     //Initialize variables
     size_t i=0, k=0, j=0, do_at=0, l=0, upcount=0, lowcount=0, rtup=0, rtlow=0, howmany=0;
-    int entry2=*entry, sortnum=0, testy;
+    int entry2=*entry;
     double uptol, lowtol, thismasslow, thismasslow2, thismassup, thismassup2;
     
 

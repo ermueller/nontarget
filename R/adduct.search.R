@@ -67,6 +67,7 @@ function(
         peakTree<-peakTree[,1:4,drop=FALSE];
         if(ppm=="TRUE"){ppm2<-1}else{ppm2<-0}
         pBar <- txtProgressBar(min = 0, max = length(peaklist[,1]), style = 3 )
+        #browser()
         T_adduct_search <- system.time({relat<-.Call("adduct_search",
                      as.matrix(peaklist[,c(1,3)]),  	# peaklist
                      as.matrix(peakTree),			# peaks - search tree
