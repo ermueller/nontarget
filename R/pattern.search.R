@@ -1038,6 +1038,5 @@ pattern.search  <-  function(
             "Rule settings"
         )
         cat("done.\n\n")
-        return(list(pattern, ST_2, ST_3))
-        #return(pattern)
+        return(pattern)
     }
