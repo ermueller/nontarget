@@ -23,35 +23,33 @@ function(
 	if(!length(peaklist[,1])>1){stop("peaklist with one entry - doesn`t make sense ...")}
 	if(!is.numeric(peaklist[,1])||!is.numeric(peaklist[,2])||!is.numeric(peaklist[,3])){stop("peaklist columns not numeric")}
     ############################################################################
-    T1 <- system.time({
-        cat("\n(1) Combine adducts...");
-        these<-match(use_adducts,adducts[,1]);
-        these<-these[is.na(these)==FALSE];
-        add<-adducts[these,];
-        add<-add[add[,6]==ion_mode,];
-        if(length(add[,1])<1){stop("No selected use_adducts among adducts ... abort!")};
-        add2<-data.frame(0,0,0,0,0,0,0);
-        add3_a<-c();
-        add3_b<-c();
-        names(add2)<-c("charge1","mult1","mass1","charge2","mult2","mass2","count")
-        that<-c(2);
-        for(i in 1:(length(add[,1])-1)){
-            for(j in (i+1):length(add[,1])){
-                add2<-rbind(add2,rep(0,7));
-                add2[that,1]<-abs(add[i,3]);
-                add2[that,2]<-add[i,4];
-                add2[that,3]<-add[i,5];
-                add2[that,4]<-abs(add[j,3]);
-                add2[that,5]<-add[j,4];
-                add2[that,6]<-add[j,5];
-                that<-c(that+1);
-                add3_a<-c(add3_a,paste(add[i,1],add[j,1],sep="<->"));
-                add3_b<-c(add3_b,paste(add[j,1],add[i,1],sep="<->"));				
-            }; #j
-        }; #i
-        add2<-add2[-1,];
-        cat("done.");
-    })
+    cat("\n(1) Combine adducts...");
+    these<-match(use_adducts,adducts[,1]);
+    these<-these[is.na(these)==FALSE];
+    add<-adducts[these,];
+    add<-add[add[,6]==ion_mode,];
+    if(length(add[,1])<1){stop("No selected use_adducts among adducts ... abort!")};
+    add2<-data.frame(0,0,0,0,0,0,0);
+    add3_a<-c();
+    add3_b<-c();
+    names(add2)<-c("charge1","mult1","mass1","charge2","mult2","mass2","count")
+    that<-c(2);
+    for(i in 1:(length(add[,1])-1)){
+        for(j in (i+1):length(add[,1])){
+            add2<-rbind(add2,rep(0,7));
+            add2[that,1]<-abs(add[i,3]);
+            add2[that,2]<-add[i,4];
+            add2[that,3]<-add[i,5];
+            add2[that,4]<-abs(add[j,3]);
+            add2[that,5]<-add[j,4];
+            add2[that,6]<-add[j,5];
+            that<-c(that+1);
+            add3_a<-c(add3_a,paste(add[i,1],add[j,1],sep="<->"));
+            add3_b<-c(add3_b,paste(add[j,1],add[i,1],sep="<->"));				
+        }; #j
+    }; #i
+    add2<-add2[-1,];
+    cat("done.");
     ############################################################################
     T2 <- system.time({
         cat("\n(2) Build peaklist kd-tree, screen, ... \n");
@@ -187,18 +185,22 @@ function(
         names(adduct)<-c("adducts","Parameters","Peaks in adduct groups","Adduct counts","Overlaps");
         cat("done.\n\n");
     })
-    sink("./nontarget.txt", append=T)
-	cat("Step 1 time:")
-	print(T1)
-	cat("Step 2 time:")
-	print(T2)
-	cat("Step kd time:")
-	print(T_kd)
-	cat("Step adduct search time:")
-	print(T_adduct_search)
-	cat("Step 3 time:")
-	print(T3)
-    sink()
+    
+    if(!is.null(getOption("nontarget_time"))){
+        sink("./nontarget.txt", append=T)
+    	cat("Step 1 time:")
+    	print(T1)
+    	cat("Step 2 time:")
+    	print(T2)
+    	cat("Step kd time:")
+    	print(T_kd)
+    	cat("Step adduct search time:")
+    	print(T_adduct_search)
+    	cat("Step 3 time:")
+    	print(T3)
+        sink()
+    }
+    
 	############################################################################
     return(adduct);
     ############################################################################

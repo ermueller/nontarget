@@ -173,7 +173,7 @@ pattern.search  <-  function(
         }
         
         if(result[13][[1]]!=entry){cat("WARNING: entry overflow -> links missing! Decrease mztol? Increase entry argument?")}
-        rm(result)
+        
         if(deter==FALSE){
             cat("\n (3) Check plausibility ... ")
             
@@ -204,7 +204,6 @@ pattern.search  <-  function(
             }
             
             # (3) Remove invalid dmass-links based on rules (1) to (3)
-            ST_2 <- system.time({
 
             # Pre-split all entries
             iso_to_split_all        <- lapply(iso_to,function(x)strsplit(x,"/")[[1]][-1])
@@ -262,7 +261,7 @@ pattern.search  <-  function(
                         clean_up()
                     } # RULE1
                     
-                    #
+                    
                     ##########################################################################
                     # (3.2) RULE2: intensity ratio check with LARGE mass tolerance ###########
                     if(any(iso_to_keep)){ # anything left to check?
@@ -272,7 +271,7 @@ pattern.search  <-  function(
                             iso_name_split <- c(strsplit(iso_name[i],"/")[[1]][-1])
                             that6 <- c(iso_to_split[duplicated(iso_to_split)==FALSE]) 
                             that7 <- c(isomat[as.numeric(iso_name_split),5]==1)
-                            #iso_tolerance_split <- c(strsplit(iso_tolerance[i],"/")[[1]][-1])
+                            iso_tolerance_split <- c(strsplit(iso_tolerance[i],"/")[[1]][-1])
                             iso_charge_split <- c(as.numeric(strsplit(iso_charge[i],"/")[[1]][-1]))
                             for(j in 1:length(that6)){
                                 if(any(that7[iso_to_split==that6[j]])){ # only on single-distanced peaks!
@@ -496,7 +495,6 @@ pattern.search  <-  function(
                         }# if any in iso_to_keep
                     }
                 } # for
-            })[3]
             #it <- data.frame(ID,getit4,getit2,getit1,getit5,getit6)
             #names(it) <- c("ID","to","from","isotope","tol","charge")
             cat("done.")
@@ -507,7 +505,7 @@ pattern.search  <-  function(
         ############################################################################
         cat("\n (4) Group peaks within charge levels: ")
         # (4) group! ###############################################################
-        ST_3 <- system.time({
+        
         along <- order(peaklist[,1],decreasing=FALSE)
         for(z in 1:length(charge_isos)){
             group1b <- rep("0",n_peaks)      # which group? per charge level! renew per charge level!
@@ -515,7 +513,8 @@ pattern.search  <-  function(
             group5b <- rep("0",n_peaks)      # ... and which charge?
             i <- c(1)
             while(i<n_peaks){
-                # correct entry, if peak points at itself! ###############################
+                
+                # Correct entry, if peak points at itself! ###############################
                 these1 <- c(as.numeric(strsplit(iso_to[along[i]],"/")[[1]][-1]))
                 if(any(these1==along[i])){ # remove any self-reference
                     these1 <- these1[these1!=along[i]]
@@ -852,7 +851,7 @@ pattern.search  <-  function(
         # data.frame(ID,getit4,getit1,getit5,getit6)
         cat("done.")
         ############################################################################
-        })[3]
+
         ############################################################################
         cat("\n (5) Create output... ")
         ############################################################################
